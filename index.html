@@ -38,14 +38,13 @@ th{position:sticky;top:0;background:var(--card);cursor:pointer;font-weight:600;u
 <header><h1>Broker Summary</h1><span id="info">Memuat…</span></header>
 <main>
 <div class="bar">
-  <label>Tanggal (boleh banyak, tidak berurutan)
-    <div class="row"><input id="dpick" type="date"><input id="dpaste" placeholder="tempel: 2026-10-01, 2026-10-05" size="30"></div></label>
+  <label>Dari<input id="from" type="date"></label>
+  <label>Sampai<input id="to" type="date"></label>
   <label>Emiten<input id="emiten" placeholder="BBCA, BBRI" size="14"></label>
   <label>Broker (opsional)<input id="broker" placeholder="YP, PD" size="12"></label>
   <button id="go">Tampilkan</button>
   <button id="csv" class="alt">Unduh CSV</button>
 </div>
-<div id="chips"></div>
 <div id="msg" role="alert"></div>
 <div class="card scroll"><table id="t"></table></div>
 </main>
@@ -54,7 +53,7 @@ th{position:sticky;top:0;background:var(--card);cursor:pointer;font-weight:600;u
 <script>
 // ===== ISI BARIS INI dengan kunci anon public =====
 const SUPABASE_URL = "https://mocdrsgehlyjbxgjtxam.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1vY2Ryc2dlaGx5amJ4Z2p0eGFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0ODI4NjEsImV4cCI6MjA5NjA1ODg2MX0.AoQHv1kOBj6XJXdKJUbECZ0OHnCHvJcglzVY0XDu6jM";
+const SUPABASE_ANON_KEY = "ISI_ANON_KEY_DI_SINI";
 // ==================================================
 
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -67,26 +66,13 @@ const COLS = [
   {k:"stddev",n:2},{k:"cv_lot",n:4},{k:"broker_active_days",n:0},{k:"emiten_total_days",n:0},{k:"consistency",n:4}
 ];
 const MAXSHOW = 1500;
-let dates = [], rows = [], sortKey = "value_net", asc = false;
-const ISO = /^\d{4}-\d{2}-\d{2}$/;
+let rows = [], sortKey = "value_net", asc = false;
 
 function fmt(v, n) {
   return v == null ? "-" : Number(v).toLocaleString("id-ID", {minimumFractionDigits: n, maximumFractionDigits: n});
 }
 const parse = s => s.split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(Boolean);
 const msg = t => $("msg").textContent = t || "";
-
-function addDates(list) {
-  list.forEach(d => { if (ISO.test(d) && !dates.includes(d)) dates.push(d); });
-  dates.sort(); chips();
-}
-function chips() {
-  $("chips").innerHTML = dates.map(d => `<span class="chip">${d}<button data-d="${d}" aria-label="Hapus ${d}">×</button></span>`).join("")
-    || '<span class="mute">Belum ada tanggal dipilih (kosong = semua tanggal)</span>';
-  $("chips").querySelectorAll("button").forEach(b => b.onclick = () => { dates = dates.filter(x => x !== b.dataset.d); chips(); });
-}
-$("dpick").onchange = e => { addDates([e.target.value]); e.target.value = ""; };
-$("dpaste").onchange = e => { addDates(e.target.value.split(/[\s,;]+/)); e.target.value = ""; };
 
 function draw() {
   const s = [...rows].sort((a, b) => {
@@ -110,8 +96,10 @@ function draw() {
 async function load() {
   msg("");
   const em = parse($("emiten").value), br = parse($("broker").value);
-  if (!dates.length && !em.length) return msg("Isi minimal satu tanggal atau satu emiten.");
-  const args = {p_dates: dates.length ? dates : null, p_emitens: em.length ? em : null, p_brokers: br.length ? br : null};
+  const d1 = $("from").value, d2 = $("to").value;
+  if (!d1 || !d2) return msg("Isi tanggal Dari dan Sampai.");
+  if (d1 > d2) return msg("Tanggal Dari tidak boleh setelah Sampai.");
+  const args = {p_from: d1, p_to: d2, p_emitens: em.length ? em : null, p_brokers: br.length ? br : null};
   $("go").disabled = true; $("info").textContent = "Memuat…";
   try {
     let all = [], from = 0;
@@ -124,7 +112,7 @@ async function load() {
     }
     rows = all.map(r => { COLS.forEach(c => { if (c.n != null) r[c.k] = r[c.k] == null ? null : Number(r[c.k]); }); return r; });
     sortKey = "value_net"; asc = false; draw();
-    $("info").textContent = rows.length.toLocaleString("id-ID") + " baris" + (rows.length > MAXSHOW ? ` (tampil ${MAXSHOW} teratas, CSV memuat semua)` : "");
+    $("info").textContent = d1 + " s/d " + d2 + " · " + rows.length.toLocaleString("id-ID") + " baris" + (rows.length > MAXSHOW ? ` (tampil ${MAXSHOW} teratas, CSV memuat semua)` : "");
   } catch (e) {
     msg("Gagal memuat: " + (e.message || e) + ". Pastikan fungsi broksum_main sudah dibuat di Supabase.");
     $("info").textContent = "Terjadi kesalahan";
@@ -144,12 +132,13 @@ $("go").onclick = load; $("csv").onclick = exportCsv;
 document.querySelectorAll("#emiten,#broker").forEach(i => i.onkeydown = e => { if (e.key === "Enter") load(); });
 
 (async function init() {
-  chips(); draw();
+  draw();
   try {
     const {data, error} = await sb.from("v_broksum").select("trade_date").order("trade_date", {ascending: false}).limit(1);
     if (error) throw error;
-    $("info").textContent = "Data terakhir: " + data[0].trade_date;
-    addDates([data[0].trade_date]);
+    const last = data[0].trade_date, d = new Date(last); d.setDate(d.getDate() - 30);
+    $("to").value = last; $("from").value = d.toISOString().slice(0, 10);
+    $("info").textContent = "Data terakhir: " + last;
   } catch (e) {
     msg("Tidak bisa terhubung ke Supabase: " + (e.message || e) + ". Cek anon key dan policy RLS.");
     $("info").textContent = "Belum terhubung";
@@ -158,4 +147,3 @@ document.querySelectorAll("#emiten,#broker").forEach(i => i.onkeydown = e => { i
 </script>
 </body>
 </html>
-
