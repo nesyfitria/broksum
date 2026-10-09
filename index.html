@@ -32,8 +32,8 @@ th:nth-child(-n+2),td:nth-child(-n+2){text-align:left}
 th{position:sticky;top:0;background:var(--card);cursor:pointer;font-weight:600;user-select:none}
 .pos{color:var(--buy)}.neg{color:var(--sell)}
 #msg{color:var(--sell);margin:6px 0;min-height:18px}
-.sub{font-size:14px;font-weight:600;margin:18px 0 8px}
-.dates{padding:6px 14px;max-height:360px;overflow:auto}
+.sub{font-size:14px;font-weight:600;margin:4px 0 8px}
+.dates{padding:6px 14px;max-height:200px;overflow:auto;margin-bottom:14px}
 details{border-bottom:1px solid var(--line);padding:6px 0}
 details:last-child{border-bottom:0}
 summary{cursor:pointer}
@@ -53,9 +53,9 @@ summary{cursor:pointer}
   <button id="csv" class="alt">Unduh CSV</button>
 </div>
 <div id="msg" role="alert"></div>
-<div class="card scroll"><table id="t"></table></div>
 <h2 class="sub">Tanggal tersedia per emiten (seluruh data) <span class="mute">· tebal = masuk rentang Dari–Sampai</span></h2>
 <div class="card dates" id="dates"><span class="mute">Isi emiten lalu klik Tampilkan.</span></div>
+<div class="card scroll"><table id="t"></table></div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
