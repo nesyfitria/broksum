@@ -32,6 +32,13 @@ th:nth-child(-n+2),td:nth-child(-n+2){text-align:left}
 th{position:sticky;top:0;background:var(--card);cursor:pointer;font-weight:600;user-select:none}
 .pos{color:var(--buy)}.neg{color:var(--sell)}
 #msg{color:var(--sell);margin:6px 0;min-height:18px}
+.sub{font-size:14px;font-weight:600;margin:18px 0 8px}
+.dates{padding:6px 14px;max-height:360px;overflow:auto}
+details{border-bottom:1px solid var(--line);padding:6px 0}
+details:last-child{border-bottom:0}
+summary{cursor:pointer}
+.dl{color:var(--mute);margin:6px 0 2px;line-height:1.9}
+.in{color:var(--ink);font-weight:600}
 </style>
 </head>
 <body>
@@ -47,6 +54,8 @@ th{position:sticky;top:0;background:var(--card);cursor:pointer;font-weight:600;u
 </div>
 <div id="msg" role="alert"></div>
 <div class="card scroll"><table id="t"></table></div>
+<h2 class="sub">Tanggal tersedia per emiten (seluruh data) <span class="mute">· tebal = masuk rentang Dari–Sampai</span></h2>
+<div class="card dates" id="dates"><span class="mute">Isi emiten lalu klik Tampilkan.</span></div>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -93,6 +102,26 @@ function draw() {
   });
 }
 
+function drawDates(list, d1, d2) {
+  const box = $("dates");
+  if (!list.length) { box.innerHTML = '<span class="mute">Tidak ada tanggal untuk emiten ini.</span>'; return; }
+  const open = list.length === 1 ? " open" : "";
+  box.innerHTML = list.slice(0, 300).map(r =>
+    `<details${open}><summary><b>${r.emiten}</b> · ${r.total_days} tanggal · ${r.dates[0]} s/d ${r.dates[r.dates.length - 1]}</summary><div class="dl">${r.dates.map(d => d >= d1 && d <= d2 ? `<span class="in">${d}</span>` : d).join(", ")}</div></details>`).join("") +
+    (list.length > 300 ? `<div class="mute">Menampilkan 300 dari ${list.length} emiten. Isi emiten tertentu untuk mempersempit.</div>` : "");
+}
+async function loadDates(args) {
+  if (!args.p_emitens) { $("dates").innerHTML = '<span class="mute">Isi emiten untuk melihat daftar tanggal seluruh datanya.</span>'; return; }
+  $("dates").innerHTML = '<span class="mute">Memuat…</span>';
+  try {
+    const {data, error} = await sb.rpc("broksum_dates", {p_emitens: args.p_emitens}).range(0, 999);
+    if (error) throw error;
+    drawDates(data, args.p_from, args.p_to);
+  } catch (e) {
+    $("dates").innerHTML = '<span class="neg">Gagal memuat daftar tanggal: ' + (e.message || e) + '. Pastikan fungsi broksum_dates sudah dibuat di Supabase.</span>';
+  }
+}
+
 async function load() {
   msg("");
   const em = parse($("emiten").value), br = parse($("broker").value);
@@ -111,7 +140,7 @@ async function load() {
       from += 1000;
     }
     rows = all.map(r => { COLS.forEach(c => { if (c.n != null) r[c.k] = r[c.k] == null ? null : Number(r[c.k]); }); return r; });
-    sortKey = "value_net"; asc = false; draw();
+    sortKey = "value_net"; asc = false; draw(); loadDates(args);
     $("info").textContent = d1 + " s/d " + d2 + " · " + rows.length.toLocaleString("id-ID") + " baris" + (rows.length > MAXSHOW ? ` (tampil ${MAXSHOW} teratas, CSV memuat semua)` : "");
   } catch (e) {
     msg("Gagal memuat: " + (e.message || e) + ". Pastikan fungsi broksum_main sudah dibuat di Supabase.");
