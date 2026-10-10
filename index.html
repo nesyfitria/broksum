@@ -6,6 +6,15 @@
 <title>Broker Summary</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<style>
+#pt td:first-child,#pt th:first-child{position:sticky;left:0;background:var(--card);z-index:1;text-align:left}
+#pt th:first-child{z-index:3}
+#pt td:nth-child(2),#pt th:nth-child(2){text-align:right}
+#pt tfoot td{position:sticky;bottom:0;background:var(--card);font-weight:600;border-top:2px solid var(--line);z-index:2}
+#pt tfoot td:first-child{z-index:3}
+#pt .tot{font-weight:600}
+#pBox{max-height:560px}
+</style>
 </head>
 <body>
 <header><h1>Broker Summary</h1><span id="info">Memuat…</span></header>
@@ -38,6 +47,23 @@
   <div id="cChips"></div>
   <div id="cMsg" class="mute">Isi rentang dan emiten, lalu klik Tampilkan.</div>
   <div id="chart"></div>
+</div>
+
+<h2 class="sub" style="margin-top:22px">4. Pivot broker × tanggal <span class="mute">· baris = broker, kolom = tanggal, lengkap dengan total</span></h2>
+<div class="card" style="padding:12px">
+  <div class="bar">
+    <label>Emiten pivot<select id="pEm"></select></label>
+    <label>Nilai
+      <select id="pMeasure">
+        <option value="lot">Lot (net)</option>
+        <option value="value">Value (net)</option>
+        <option value="volume">Volume (|lot|)</option>
+        <option value="freq">Freq</option>
+      </select></label>
+    <button id="pCsv" class="alt">Unduh CSV</button>
+  </div>
+  <div id="pMsg" class="mute">Isi rentang dan emiten, lalu klik Tampilkan.</div>
+  <div class="scroll" id="pBox"><table id="pt"></table></div>
 </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -117,7 +143,7 @@ async function load() {
     }
     rows = all.map(r => { COLS.forEach(c => { if (c.n != null) r[c.k] = r[c.k] == null ? null : Number(r[c.k]); }); return r; });
     sortKey = "value_net"; asc = false; draw(); loadDates(args);
-    ch.pending = args; runChart();
+    ch.pending = args; runChart(); runPivot(args);
     $("info").textContent = d1 + " s/d " + d2 + " · " + rows.length.toLocaleString("id-ID") + " baris" + (rows.length > MAXSHOW ? ` (tampil ${MAXSHOW} teratas, CSV memuat semua)` : "");
   } catch (e) {
     msg("Gagal memuat: " + (e.message || e) + ". Pastikan fungsi broksum_main sudah dibuat di Supabase.");
@@ -239,6 +265,74 @@ $("cReset").onclick = async () => {
   try { await ensureData(ch.sel); renderChart(); } catch (e) { cmsg("Gagal: " + (e.message || e), 1); }
 };
 addEventListener("resize", () => ch.chart && ch.chart.resize());
+
+/* ===== PIVOT ===== */
+const pv = {a: null, rows: [], sortKey: "t", asc: false};
+const pmsg = (t, bad) => { $("pMsg").textContent = t || ""; $("pMsg").className = bad ? "neg" : "mute"; };
+async function runPivot(a) {
+  pv.a = a; pv.sortKey = "t"; pv.asc = false;
+  if (!a.p_emitens) { $("pEm").innerHTML = ""; pv.rows = []; pmsg("Isi emiten untuk menampilkan pivot."); drawPivot(); return; }
+  const prev = $("pEm").value;
+  $("pEm").innerHTML = a.p_emitens.map(e => `<option>${e}</option>`).join("");
+  if (a.p_emitens.includes(prev)) $("pEm").value = prev;
+  await loadPivot();
+}
+async function loadPivot() {
+  pmsg("Memuat pivot…");
+  try {
+    pv.rows = await rpcAll("broksum_pivot", {p_from: pv.a.p_from, p_to: pv.a.p_to, p_emiten: $("pEm").value});
+    pmsg(pv.rows.length ? "" : "Tidak ada data untuk emiten ini pada rentang tersebut.");
+    drawPivot();
+  } catch (e) {
+    pmsg("Gagal memuat pivot: " + (e.message || e) + ". Pastikan fungsi broksum_pivot sudah dibuat di Supabase.", 1);
+  }
+}
+function pivotData() {
+  const k = $("pMeasure").value, dates = [...new Set(pv.rows.map(r => r.trade_date))].sort();
+  const m = new Map(), col = new Map(dates.map(d => [d, 0]));
+  let grand = 0;
+  pv.rows.forEach(r => {
+    const v = +r[k] || 0;
+    let o = m.get(r.broker); if (!o) m.set(r.broker, o = {b: r.broker, c: new Map(), t: 0});
+    o.c.set(r.trade_date, v); o.t += v; col.set(r.trade_date, col.get(r.trade_date) + v); grand += v;
+  });
+  const val = (o) => pv.sortKey === "b" ? o.b : pv.sortKey === "t" ? o.t : (o.c.get(pv.sortKey) || 0);
+  const list = [...m.values()].sort((x, y) => { const p = val(x), q = val(y); return (p > q ? 1 : p < q ? -1 : 0) * (pv.asc ? 1 : -1); });
+  return {k, dates, list, col, grand};
+}
+function drawPivot() {
+  if (!pv.rows.length) { $("pt").innerHTML = ""; return; }
+  const {k, dates, list, col, grand} = pivotData();
+  const cls = v => (k === "lot" || k === "value") && v ? (v > 0 ? "pos" : "neg") : "";
+  const arrow = key => pv.sortKey === key ? (pv.asc ? " ▲" : " ▼") : "";
+  $("pt").innerHTML =
+    '<thead><tr><th data-k="b" tabindex="0">Broker' + arrow("b") + "</th>" +
+    dates.map(d => `<th data-k="${d}" tabindex="0">${d}${arrow(d)}</th>`).join("") +
+    `<th class="tot" data-k="t" tabindex="0">Total${arrow("t")}</th></tr></thead><tbody>` +
+    list.map(o => `<tr><td>${o.b}</td>` +
+      dates.map(d => o.c.has(d) ? `<td class="${cls(o.c.get(d))}">${fmt(o.c.get(d), 0)}</td>` : '<td class="mute">·</td>').join("") +
+      `<td class="tot ${cls(o.t)}">${fmt(o.t, 0)}</td></tr>`).join("") +
+    "</tbody><tfoot><tr><td>Total</td>" +
+    dates.map(d => `<td class="${cls(col.get(d))}">${fmt(col.get(d), 0)}</td>`).join("") +
+    `<td class="${cls(grand)}">${fmt(grand, 0)}</td></tr></tfoot>`;
+  $("pt").querySelectorAll("thead th").forEach(th => {
+    const go = () => { const key = th.dataset.k; pv.asc = pv.sortKey === key ? !pv.asc : false; pv.sortKey = key; drawPivot(); };
+    th.onclick = go; th.onkeydown = e => { if (e.key === "Enter") go(); };
+  });
+}
+function pivotCsv() {
+  if (!pv.rows.length) return pmsg("Belum ada data untuk diunduh.");
+  const {dates, list, col, grand} = pivotData();
+  const lines = [["broker", ...dates, "total"].join(",")]
+    .concat(list.map(o => [o.b, ...dates.map(d => o.c.has(d) ? o.c.get(d) : ""), o.t].join(",")))
+    .concat([["total", ...dates.map(d => col.get(d)), grand].join(",")]);
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
+  a.download = "pivot_" + $("pEm").value + "_" + $("pMeasure").value + ".csv"; a.click();
+}
+$("pEm").onchange = () => { pv.sortKey = "t"; pv.asc = false; loadPivot(); };
+$("pMeasure").onchange = drawPivot;
+$("pCsv").onclick = pivotCsv;
 
 $("go").onclick = load; $("csv").onclick = exportCsv;
 document.querySelectorAll("#emiten,#broker").forEach(i => i.onkeydown = e => { if (e.key === "Enter") load(); });
