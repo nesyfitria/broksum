@@ -14,6 +14,7 @@
 #pt tfoot td:first-child{z-index:3}
 #pt .tot{font-weight:600}
 #pBox{max-height:560px}
+#pchart{height:340px;width:100%}
 </style>
 </head>
 <body>
@@ -35,12 +36,19 @@
 <h2 class="sub">2. Tabel utama</h2>
 <div class="card scroll"><table id="t"></table></div>
 
-<h2 class="sub" style="margin-top:22px">3. Chart harga (OHLC) + lot per broker <span class="mute">· 20 broker dengan volume terbesar</span></h2>
-<div class="card" style="padding:12px">
+<h2 class="sub" style="margin-top:22px">3. Chart harga dan lot per broker</h2>
+<div class="bar"><label>Emiten chart<select id="cEm"></select></label></div>
+<div class="card" id="prCard" style="padding:12px;margin-bottom:14px">
   <div class="bar">
-    <label>Emiten chart<select id="cEm"></select></label>
+    <label>Gaya harga<select id="cPrice"><option value="candle">Candlestick (OHLC)</option><option value="ohlc">Batang OHLC</option><option value="off">Sembunyikan</option></select></label>
+    <span id="prMsg" class="mute"></span>
+  </div>
+  <div id="pchart"></div>
+</div>
+<div class="card" style="padding:12px">
+  <div class="mute" style="margin-bottom:8px">Lot per broker · 20 broker dengan volume terbesar</div>
+  <div class="bar">
     <label>Tampilan<select id="cMode"><option value="harian">Lot harian (net)</option><option value="kum">Lot kumulatif</option></select></label>
-    <label>Harga<select id="cPrice"><option value="candle">Candlestick (OHLC)</option><option value="ohlc">Batang OHLC</option><option value="off">Sembunyikan</option></select></label>
     <label>Tambah broker<div class="row"><input id="cAdd" list="bkList" placeholder="mis. YP" size="8"><button id="cAddBtn" class="alt">Tambah</button></div></label>
     <button id="cReset" class="alt">Reset top 20</button>
   </div>
@@ -163,7 +171,7 @@ function exportCsv() {
 }
 /* ===== CHART ===== */
 const MAXB = 20;
-const ch = {chart: null, a: null, em: null, dates: [], rank: [], sel: [], cache: new Map(), colors: new Map(), n: 0, dirty: false, pending: null, price: new Map()};
+const ch = {chart: null, a: null, em: null, dates: [], rank: [], sel: [], cache: new Map(), colors: new Map(), n: 0, dirty: false, pending: null, price: new Map(), pchart: null};
 const cssv = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const kmb = v => {
   const a = Math.abs(v), s = v < 0 ? "-" : "", f = (x, u) => s + (+x.toFixed(1)) + u;
@@ -198,7 +206,7 @@ async function ensureData(list) {
 async function runChart() {
   const a = ch.pending; if (!a) return;
   ch.pending = null; ch.a = a;
-  if (!a.p_emitens) { $("cEm").innerHTML = ""; ch.sel = []; ch.rank = []; ch.dates = []; cmsg("Isi emiten untuk menampilkan chart."); renderChart(); return; }
+  if (!a.p_emitens) { $("cEm").innerHTML = ""; ch.sel = []; ch.rank = []; ch.dates = []; cmsg("Isi emiten untuk menampilkan chart."); ch.price = new Map(); renderChart(); renderPrice(); return; }
   const prev = $("cEm").value;
   $("cEm").innerHTML = a.p_emitens.map(e => `<option>${e}</option>`).join("");
   if (a.p_emitens.includes(prev)) $("cEm").value = prev;
@@ -217,8 +225,9 @@ async function refreshChart() {
     ch.sel = ch.rank.slice(0, MAXB).map(r => r.broker);
     await ensureData(ch.sel);
     const perr = await loadPrice();
-    cmsg(ch.dates.length ? perr : "Tidak ada data untuk emiten ini pada rentang tersebut.", !!perr);
-    renderChart();
+    $("prMsg").textContent = perr; $("prMsg").className = perr ? "neg" : "mute";
+    cmsg(ch.dates.length ? "" : "Tidak ada data broker untuk emiten ini pada rentang tersebut.");
+    renderChart(); renderPrice();
   } catch (e) {
     cmsg("Gagal memuat chart: " + (e.message || e) + ". Pastikan fungsi broksum_rank, broksum_series, dan broksum_dates sudah dibuat di Supabase.", 1);
   }
@@ -248,6 +257,34 @@ function ohlcItem(params, api) {
     {type: "line", shape: {x1: o[0] - w, y1: o[1], x2: o[0], y2: o[1]}, style: st},
     {type: "line", shape: {x1: c[0], y1: c[1], x2: c[0] + w, y2: c[1]}, style: st}]};
 }
+function renderPrice() {
+  const mode = $("cPrice").value;
+  $("prCard").classList.toggle("hide", mode === "off");
+  if (mode === "off") return;
+  if (!ch.pchart) ch.pchart = echarts.init($("pchart"));
+  ch.pchart.resize();
+  const dates = [...ch.price.keys()], fp = v => v.toLocaleString("id-ID");
+  const mute = cssv("--mute"), line = cssv("--line"), up = cssv("--buy"), dn = cssv("--sell");
+  const ser = mode === "candle"
+    ? {name: "Harga", type: "candlestick", itemStyle: {color: up, color0: dn, borderColor: up, borderColor0: dn},
+       data: dates.map(d => { const p = ch.price.get(d); return [p.o, p.c, p.l, p.h]; })}
+    : {name: "Harga", type: "custom", renderItem: ohlcItem, encode: {x: 0, y: [1, 2, 3, 4]},
+       data: dates.map((d, i) => { const p = ch.price.get(d); return {value: [i, p.o, p.c, p.l, p.h], itemStyle: {color: p.c >= p.o ? up : dn}}; })};
+  ch.pchart.setOption({
+    animation: false,
+    grid: {left: 78, right: 20, top: 16, bottom: 70},
+    tooltip: {trigger: "axis", confine: true, backgroundColor: cssv("--card"), borderColor: line, textStyle: {color: cssv("--ink"), fontSize: 11},
+      formatter: ps => {
+        const d = ps[0].axisValue, p = ch.price.get(d), prev = ch.price.get(dates[dates.indexOf(d) - 1]);
+        const chg = prev ? ` (${(p.c / prev.c - 1 >= 0 ? "+" : "")}${((p.c / prev.c - 1) * 100).toFixed(2)}%)` : "";
+        return `<b>${d}</b><br>O ${fp(p.o)} · H ${fp(p.h)}<br>L ${fp(p.l)} · C ${fp(p.c)}${chg}`;
+      }},
+    xAxis: {type: "category", data: dates, boundaryGap: true, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}},
+    yAxis: {type: "value", scale: true, name: "Harga", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: fp}, splitLine: {lineStyle: {color: line}}},
+    dataZoom: [{type: "inside"}, {type: "slider", height: 18, bottom: 8}],
+    series: [ser]
+  }, true);
+}
 function renderChart() {
   const rk = new Map(ch.rank.map(r => [r.broker, r.volume]));
   $("cChips").innerHTML = ch.sel.map(b =>
@@ -260,42 +297,21 @@ function renderChart() {
   });
   if (!ch.chart) ch.chart = echarts.init($("chart"));
   const ink = cssv("--ink"), mute = cssv("--mute"), line = cssv("--line"), kum = $("cMode").value === "kum";
-  const mode = $("cPrice").value, on = mode !== "off", up = cssv("--buy"), dn = cssv("--sell");
-  const fp = v => v.toLocaleString("id-ID");
-  $("chart").style.height = (on ? 640 : 420) + "px"; ch.chart.resize();
-  const grid = [], xAxis = [], yAxis = [];
-  if (on) {
-    grid.push({left: 78, right: 20, top: 16, height: 220});
-    xAxis.push({type: "category", gridIndex: 0, data: ch.dates, boundaryGap: true, axisLabel: {show: false}, axisTick: {show: false}, axisLine: {lineStyle: {color: line}}});
-    yAxis.push({type: "value", gridIndex: 0, scale: true, name: "Harga", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: fp, showMinLabel: false}, splitLine: {lineStyle: {color: line}}});
-    grid.push({left: 78, right: 20, top: 236, height: 300});
-  } else grid.push({left: 78, right: 20, top: 16, bottom: 70});
-  const gi = grid.length - 1;
-  xAxis.push({type: "category", gridIndex: gi, data: ch.dates, boundaryGap: true, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}});
-  yAxis.push({type: "value", gridIndex: gi, name: "Lot", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: kmb, showMaxLabel: !on}, splitLine: {lineStyle: {color: line}}});
   const series = ch.sel.map(b => {
     const m = ch.cache.get(b) || new Map(); let acc = 0;
-    return {name: b, type: "line", smooth: true, showSymbol: false, emphasis: {focus: "series"}, xAxisIndex: gi, yAxisIndex: gi,
+    return {name: b, type: "line", smooth: true, showSymbol: false, emphasis: {focus: "series"},
       lineStyle: {width: 1.6, color: colorOf(b)}, itemStyle: {color: colorOf(b)},
       data: ch.dates.map(d => { const v = m.get(d) || 0; return kum ? (acc += v) : v; })};
   });
-  if (on) series.unshift(mode === "candle"
-    ? {name: "Harga", type: "candlestick", xAxisIndex: 0, yAxisIndex: 0,
-       itemStyle: {color: up, color0: dn, borderColor: up, borderColor0: dn},
-       data: ch.dates.map(d => { const p = ch.price.get(d); return p ? [p.o, p.c, p.l, p.h] : "-"; })}
-    : {name: "Harga", type: "custom", xAxisIndex: 0, yAxisIndex: 0, renderItem: ohlcItem, encode: {x: 0, y: [1, 2, 3, 4]}, z: 3,
-       data: ch.dates.flatMap((d, i) => { const p = ch.price.get(d); return p ? [{value: [i, p.o, p.c, p.l, p.h], itemStyle: {color: p.c >= p.o ? up : dn}}] : []; })});
-  const zx = xAxis.map((_, i) => i);
   ch.chart.setOption({
-    animation: false, grid, xAxis, yAxis, series,
-    axisPointer: {link: [{xAxisIndex: "all"}]},
+    animation: false,
+    grid: {left: 78, right: 20, top: 16, bottom: 70},
     tooltip: {trigger: "axis", confine: true, backgroundColor: cssv("--card"), borderColor: line, textStyle: {color: ink, fontSize: 11},
-      formatter: ps => {
-        const d = ps[0].axisValue, pr = ch.price.get(d);
-        return `<b>${d}</b><br>` + (on && pr ? `O ${fp(pr.o)} · H ${fp(pr.h)} · L ${fp(pr.l)} · C ${fp(pr.c)}<br><br>` : "") +
-          ps.filter(p => p.seriesType === "line").sort((a, b) => b.value - a.value).map(p => `${p.marker}${p.seriesName} <b>${kmb(p.value)}</b>`).join("<br>");
-      }},
-    dataZoom: [{type: "inside", xAxisIndex: zx}, {type: "slider", xAxisIndex: zx, height: 18, bottom: 8}]
+      formatter: ps => `<b>${ps[0].axisValueLabel}</b><br>` + ps.slice().sort((a, b) => b.value - a.value).map(p => `${p.marker}${p.seriesName} <b>${kmb(p.value)}</b>`).join("<br>")},
+    xAxis: {type: "category", data: ch.dates, boundaryGap: false, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}},
+    yAxis: {type: "value", name: "Lot", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: kmb}, splitLine: {lineStyle: {color: line}}},
+    dataZoom: [{type: "inside"}, {type: "slider", height: 18, bottom: 8}],
+    series
   }, true);
 }
 async function addBroker() {
@@ -309,14 +325,14 @@ async function addBroker() {
 $("cAddBtn").onclick = addBroker; $("cAdd").onkeydown = e => { if (e.key === "Enter") addBroker(); };
 $("cMode").onchange = renderChart; $("cEm").onchange = refreshChart;
 $("cPrice").onchange = async () => {
-  if ($("cPrice").value !== "off" && !ch.price.size) { const e = await loadPrice(); if (e) cmsg(e, 1); }
-  renderChart();
+  if ($("cPrice").value !== "off" && !ch.price.size) { const e = await loadPrice(); $("prMsg").textContent = e; $("prMsg").className = e ? "neg" : "mute"; }
+  renderPrice();
 };
 $("cReset").onclick = async () => {
   ch.sel = ch.rank.slice(0, MAXB).map(r => r.broker);
   try { await ensureData(ch.sel); renderChart(); } catch (e) { cmsg("Gagal: " + (e.message || e), 1); }
 };
-addEventListener("resize", () => ch.chart && ch.chart.resize());
+addEventListener("resize", () => { ch.chart && ch.chart.resize(); ch.pchart && ch.pchart.resize(); });
 
 /* ===== PIVOT ===== */
 const pv = {a: null, rows: [], sortKey: "t", asc: false};
