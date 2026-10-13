@@ -40,7 +40,7 @@
   <div class="bar">
     <label>Emiten chart<select id="cEm"></select></label>
     <label>Tampilan<select id="cMode"><option value="harian">Lot harian (net)</option><option value="kum">Lot kumulatif</option></select></label>
-    <label>Harga<select id="cPrice"><option value="ohlc">OHLC (batang)</option><option value="candle">Candlestick</option><option value="off">Sembunyikan</option></select></label>
+    <label>Harga<select id="cPrice"><option value="candle">Candlestick (OHLC)</option><option value="ohlc">Batang OHLC</option><option value="off">Sembunyikan</option></select></label>
     <label>Tambah broker<div class="row"><input id="cAdd" list="bkList" placeholder="mis. YP" size="8"><button id="cAddBtn" class="alt">Tambah</button></div></label>
     <button id="cReset" class="alt">Reset top 20</button>
   </div>
@@ -262,17 +262,17 @@ function renderChart() {
   const ink = cssv("--ink"), mute = cssv("--mute"), line = cssv("--line"), kum = $("cMode").value === "kum";
   const mode = $("cPrice").value, on = mode !== "off", up = cssv("--buy"), dn = cssv("--sell");
   const fp = v => v.toLocaleString("id-ID");
-  $("chart").style.height = (on ? 660 : 420) + "px"; ch.chart.resize();
+  $("chart").style.height = (on ? 640 : 420) + "px"; ch.chart.resize();
   const grid = [], xAxis = [], yAxis = [];
   if (on) {
-    grid.push({left: 58, right: 20, top: 16, height: 200});
+    grid.push({left: 78, right: 20, top: 16, height: 220});
     xAxis.push({type: "category", gridIndex: 0, data: ch.dates, boundaryGap: true, axisLabel: {show: false}, axisTick: {show: false}, axisLine: {lineStyle: {color: line}}});
-    yAxis.push({type: "value", gridIndex: 0, scale: true, name: "Harga", nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: fp}, splitLine: {lineStyle: {color: line}}});
-    grid.push({left: 58, right: 20, top: 250, height: 300});
-  } else grid.push({left: 58, right: 20, top: 16, bottom: 70});
+    yAxis.push({type: "value", gridIndex: 0, scale: true, name: "Harga", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: fp, showMinLabel: false}, splitLine: {lineStyle: {color: line}}});
+    grid.push({left: 78, right: 20, top: 236, height: 300});
+  } else grid.push({left: 78, right: 20, top: 16, bottom: 70});
   const gi = grid.length - 1;
   xAxis.push({type: "category", gridIndex: gi, data: ch.dates, boundaryGap: true, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}});
-  yAxis.push({type: "value", gridIndex: gi, name: "Lot", nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: kmb}, splitLine: {lineStyle: {color: line}}});
+  yAxis.push({type: "value", gridIndex: gi, name: "Lot", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: kmb, showMaxLabel: !on}, splitLine: {lineStyle: {color: line}}});
   const series = ch.sel.map(b => {
     const m = ch.cache.get(b) || new Map(); let acc = 0;
     return {name: b, type: "line", smooth: true, showSymbol: false, emphasis: {focus: "series"}, xAxisIndex: gi, yAxisIndex: gi,
