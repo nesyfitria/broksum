@@ -13,7 +13,13 @@
 #pt tfoot td{position:sticky;bottom:0;background:var(--card);font-weight:600;border-top:2px solid var(--line);z-index:2}
 #pt tfoot td:first-child{z-index:3}
 #pt .tot{font-weight:600}
-#pBox{max-height:560px}
+#pBox,#bBox{max-height:560px}
+#bt td:first-child,#bt th:first-child{position:sticky;left:0;background:var(--card);z-index:1;text-align:left}
+#bt th:first-child{z-index:3}
+#bt td:nth-child(2),#bt th:nth-child(2){text-align:right}
+#bt th{cursor:default}
+#bt tfoot td{position:sticky;bottom:0;background:var(--card);font-weight:600;border-top:2px solid var(--line);z-index:2}
+#bt tfoot td:first-child{z-index:3}
 #pchart{height:340px;width:100%}
 </style>
 </head>
@@ -73,6 +79,16 @@
   </div>
   <div id="pMsg" class="mute">Isi rentang dan emiten, lalu klik Tampilkan.</div>
   <div class="scroll" id="pBox"><table id="pt"></table></div>
+</div>
+
+<h2 class="sub" style="margin-top:22px">5. Pivot bias_net · tanggal × broker <span class="mute">· 30 broker dengan volume terbesar · bias kumulatif sejak awal rentang</span></h2>
+<div class="card" style="padding:12px">
+  <div class="bar">
+    <label>Emiten bias<select id="bEm"></select></label>
+    <button id="bCsv" class="alt">Unduh CSV</button>
+  </div>
+  <div id="bMsg" class="mute">Isi rentang dan emiten, lalu klik Tampilkan.</div>
+  <div class="scroll" id="bBox"><table id="bt"></table></div>
 </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -152,7 +168,7 @@ async function load() {
     }
     rows = all.map(r => { COLS.forEach(c => { if (c.n != null) r[c.k] = r[c.k] == null ? null : Number(r[c.k]); }); return r; });
     sortKey = "value_net"; asc = false; draw(); loadDates(args);
-    ch.pending = args; runChart(); runPivot(args);
+    ch.pending = args; runChart(); runPivot(args); runBias(args);
     $("info").textContent = d1 + " s/d " + d2 + " · " + rows.length.toLocaleString("id-ID") + " baris" + (rows.length > MAXSHOW ? ` (tampil ${MAXSHOW} teratas, CSV memuat semua)` : "");
   } catch (e) {
     msg("Gagal memuat: " + (e.message || e) + ". Pastikan fungsi broksum_main sudah dibuat di Supabase.");
@@ -401,6 +417,64 @@ function pivotCsv() {
 $("pEm").onchange = () => { pv.sortKey = "t"; pv.asc = false; loadPivot(); };
 $("pMeasure").onchange = drawPivot;
 $("pCsv").onclick = pivotCsv;
+
+/* ===== PIVOT BIAS ===== */
+const pb = {a: null, rows: []};
+const bmsg = (t, bad) => { $("bMsg").textContent = t || ""; $("bMsg").className = bad ? "neg" : "mute"; };
+async function runBias(a) {
+  pb.a = a;
+  if (!a.p_emitens) { $("bEm").innerHTML = ""; pb.rows = []; bmsg("Isi emiten untuk menampilkan pivot bias."); drawBias(); return; }
+  const prev = $("bEm").value;
+  $("bEm").innerHTML = a.p_emitens.map(e => `<option>${e}</option>`).join("");
+  if (a.p_emitens.includes(prev)) $("bEm").value = prev;
+  await loadBias();
+}
+async function loadBias() {
+  bmsg("Memuat pivot bias…");
+  try {
+    pb.rows = await rpcAll("broksum_bias", {p_from: pb.a.p_from, p_to: pb.a.p_to, p_emiten: $("bEm").value, p_top: 30});
+    bmsg(pb.rows.length ? "" : "Tidak ada data untuk emiten ini pada rentang tersebut.");
+    drawBias();
+  } catch (e) {
+    bmsg("Gagal memuat pivot bias: " + (e.message || e) + ". Pastikan fungsi broksum_bias sudah dibuat di Supabase.", 1);
+  }
+}
+function biasData() {
+  const dates = [...new Set(pb.rows.map(r => r.trade_date))].sort();
+  const vol = new Map(), cell = new Map();
+  pb.rows.forEach(r => {
+    vol.set(r.broker, (vol.get(r.broker) || 0) + (+r.volume));
+    cell.set(r.trade_date + "|" + r.broker, r.bias_net == null ? null : +r.bias_net);
+  });
+  const brokers = [...vol.keys()].sort((x, y) => vol.get(y) - vol.get(x) || (x > y ? 1 : -1));
+  return {dates, brokers, cell};
+}
+function drawBias() {
+  if (!pb.rows.length) { $("bt").innerHTML = ""; return; }
+  const {dates, brokers, cell} = biasData();
+  const shade = v => !v ? "" : ` style="background:${v > 0 ? "rgba(11,138,95," : "rgba(201,60,60,"}${(0.08 + 0.52 * Math.min(Math.abs(v), 1)).toFixed(2)})"`;
+  const last = new Map();
+  dates.forEach(d => brokers.forEach(b => { const v = cell.get(d + "|" + b); if (v != null) last.set(b, v); }));
+  $("bt").innerHTML = "<thead><tr><th>Tanggal</th>" + brokers.map(b => `<th>${b}</th>`).join("") + "</tr></thead><tbody>" +
+    dates.map(d => `<tr><td>${d}</td>` + brokers.map(b => {
+      const v = cell.get(d + "|" + b);
+      return v == null ? '<td class="mute">·</td>' : `<td${shade(v)}>${fmt(v, 2)}</td>`;
+    }).join("") + "</tr>").join("") +
+    "</tbody><tfoot><tr><td>Akhir rentang</td>" + brokers.map(b => {
+      const v = last.get(b);
+      return v == null ? "<td>-</td>" : `<td class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${fmt(v, 2)}</td>`;
+    }).join("") + "</tr></tfoot>";
+}
+function biasCsv() {
+  if (!pb.rows.length) return bmsg("Belum ada data untuk diunduh.");
+  const {dates, brokers, cell} = biasData();
+  const lines = [["tanggal", ...brokers].join(",")].concat(dates.map(d =>
+    [d, ...brokers.map(b => { const v = cell.get(d + "|" + b); return v == null ? "" : v; })].join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
+  a.download = "pivot_bias_" + $("bEm").value + ".csv"; a.click();
+}
+$("bEm").onchange = loadBias; $("bCsv").onclick = biasCsv;
 
 $("go").onclick = load; $("csv").onclick = exportCsv;
 document.querySelectorAll("#emiten,#broker").forEach(i => i.onkeydown = e => { if (e.key === "Enter") load(); });
