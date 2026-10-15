@@ -14,6 +14,7 @@
 #pt tfoot td:first-child{z-index:3}
 #pt .tot{font-weight:600}
 #pBox{max-height:560px}
+#pchart{height:340px;width:100%}
 </style>
 </head>
 <body>
@@ -35,10 +36,18 @@
 <h2 class="sub">2. Tabel utama</h2>
 <div class="card scroll"><table id="t"></table></div>
 
-<h2 class="sub" style="margin-top:22px">3. Chart lot per broker <span class="mute">· 20 broker dengan volume terbesar</span></h2>
-<div class="card" style="padding:12px">
+<h2 class="sub" style="margin-top:22px">3. Chart harga dan lot per broker</h2>
+<div class="bar"><label>Emiten chart<select id="cEm"></select></label></div>
+<div class="card" id="prCard" style="padding:12px;margin-bottom:14px">
   <div class="bar">
-    <label>Emiten chart<select id="cEm"></select></label>
+    <label>Gaya harga<select id="cPrice"><option value="candle">Candlestick (OHLC)</option><option value="ohlc">Batang OHLC</option><option value="off">Sembunyikan</option></select></label>
+    <span id="prMsg" class="mute"></span>
+  </div>
+  <div id="pchart"></div>
+</div>
+<div class="card" style="padding:12px">
+  <div class="mute" style="margin-bottom:8px">Lot per broker · 20 broker dengan volume terbesar</div>
+  <div class="bar">
     <label>Tampilan<select id="cMode"><option value="harian">Lot harian (net)</option><option value="kum">Lot kumulatif</option></select></label>
     <label>Tambah broker<div class="row"><input id="cAdd" list="bkList" placeholder="mis. YP" size="8"><button id="cAddBtn" class="alt">Tambah</button></div></label>
     <button id="cReset" class="alt">Reset top 20</button>
@@ -162,7 +171,7 @@ function exportCsv() {
 }
 /* ===== CHART ===== */
 const MAXB = 20;
-const ch = {chart: null, a: null, em: null, dates: [], rank: [], sel: [], cache: new Map(), colors: new Map(), n: 0, dirty: false, pending: null};
+const ch = {chart: null, a: null, em: null, dates: [], rank: [], sel: [], cache: new Map(), colors: new Map(), n: 0, dirty: false, pending: null, price: new Map(), pchart: null};
 const cssv = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const kmb = v => {
   const a = Math.abs(v), s = v < 0 ? "-" : "", f = (x, u) => s + (+x.toFixed(1)) + u;
@@ -197,7 +206,7 @@ async function ensureData(list) {
 async function runChart() {
   const a = ch.pending; if (!a) return;
   ch.pending = null; ch.a = a;
-  if (!a.p_emitens) { $("cEm").innerHTML = ""; ch.sel = []; ch.rank = []; ch.dates = []; cmsg("Isi emiten untuk menampilkan chart."); renderChart(); return; }
+  if (!a.p_emitens) { $("cEm").innerHTML = ""; ch.sel = []; ch.rank = []; ch.dates = []; cmsg("Isi emiten untuk menampilkan chart."); ch.price = new Map(); renderChart(); renderPrice(); return; }
   const prev = $("cEm").value;
   $("cEm").innerHTML = a.p_emitens.map(e => `<option>${e}</option>`).join("");
   if (a.p_emitens.includes(prev)) $("cEm").value = prev;
@@ -215,11 +224,66 @@ async function refreshChart() {
     ch.dates = dd.length ? dd[0].dates : [];
     ch.sel = ch.rank.slice(0, MAXB).map(r => r.broker);
     await ensureData(ch.sel);
-    cmsg(ch.dates.length ? "" : "Tidak ada data untuk emiten ini pada rentang tersebut.");
-    renderChart();
+    const perr = await loadPrice();
+    $("prMsg").textContent = perr; $("prMsg").className = perr ? "neg" : "mute";
+    cmsg(ch.dates.length ? "" : "Tidak ada data broker untuk emiten ini pada rentang tersebut.");
+    renderChart(); renderPrice();
   } catch (e) {
     cmsg("Gagal memuat chart: " + (e.message || e) + ". Pastikan fungsi broksum_rank, broksum_series, dan broksum_dates sudah dibuat di Supabase.", 1);
   }
+}
+async function loadPrice() {
+  ch.price = new Map();
+  if ($("cPrice").value === "off" || !ch.em || !ch.a) return "";
+  try {
+    let from = 0;
+    while (true) {
+      const {data, error} = await sb.from("v_price").select("trade_date,open,high,low,close").eq("emiten", ch.em)
+        .gte("trade_date", ch.a.p_from).lte("trade_date", ch.a.p_to).order("trade_date").range(from, from + 999);
+      if (error) throw error;
+      data.forEach(r => ch.price.set(String(r.trade_date).slice(0, 10), {o: +r.open, h: +r.high, l: +r.low, c: +r.close}));
+      if (data.length < 1000) break;
+      from += 1000;
+    }
+    return "";
+  } catch (e) { ch.price = new Map(); return "Harga tidak bisa dimuat: " + (e.message || e); }
+}
+function ohlcItem(params, api) {
+  const x = api.value(0), o = api.coord([x, api.value(1)]), c = api.coord([x, api.value(2)]),
+        l = api.coord([x, api.value(3)]), h = api.coord([x, api.value(4)]);
+  const w = api.size([1, 0])[0] * 0.3, st = api.style({stroke: api.visual("color"), lineWidth: 1.5, fill: null});
+  return {type: "group", children: [
+    {type: "line", shape: {x1: l[0], y1: l[1], x2: h[0], y2: h[1]}, style: st},
+    {type: "line", shape: {x1: o[0] - w, y1: o[1], x2: o[0], y2: o[1]}, style: st},
+    {type: "line", shape: {x1: c[0], y1: c[1], x2: c[0] + w, y2: c[1]}, style: st}]};
+}
+function renderPrice() {
+  const mode = $("cPrice").value;
+  $("prCard").classList.toggle("hide", mode === "off");
+  if (mode === "off") return;
+  if (!ch.pchart) ch.pchart = echarts.init($("pchart"));
+  ch.pchart.resize();
+  const dates = [...ch.price.keys()], fp = v => v.toLocaleString("id-ID");
+  const mute = cssv("--mute"), line = cssv("--line"), up = cssv("--buy"), dn = cssv("--sell");
+  const ser = mode === "candle"
+    ? {name: "Harga", type: "candlestick", itemStyle: {color: up, color0: dn, borderColor: up, borderColor0: dn},
+       data: dates.map(d => { const p = ch.price.get(d); return [p.o, p.c, p.l, p.h]; })}
+    : {name: "Harga", type: "custom", renderItem: ohlcItem, encode: {x: 0, y: [1, 2, 3, 4]},
+       data: dates.map((d, i) => { const p = ch.price.get(d); return {value: [i, p.o, p.c, p.l, p.h], itemStyle: {color: p.c >= p.o ? up : dn}}; })};
+  ch.pchart.setOption({
+    animation: false,
+    grid: {left: 78, right: 20, top: 16, bottom: 70},
+    tooltip: {trigger: "axis", confine: true, backgroundColor: cssv("--card"), borderColor: line, textStyle: {color: cssv("--ink"), fontSize: 11},
+      formatter: ps => {
+        const d = ps[0].axisValue, p = ch.price.get(d), prev = ch.price.get(dates[dates.indexOf(d) - 1]);
+        const chg = prev ? ` (${(p.c / prev.c - 1 >= 0 ? "+" : "")}${((p.c / prev.c - 1) * 100).toFixed(2)}%)` : "";
+        return `<b>${d}</b><br>O ${fp(p.o)} · H ${fp(p.h)}<br>L ${fp(p.l)} · C ${fp(p.c)}${chg}`;
+      }},
+    xAxis: {type: "category", data: dates, boundaryGap: true, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}},
+    yAxis: {type: "value", scale: true, name: "Harga", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: fp}, splitLine: {lineStyle: {color: line}}},
+    dataZoom: [{type: "inside"}, {type: "slider", height: 18, bottom: 8}],
+    series: [ser]
+  }, true);
 }
 function renderChart() {
   const rk = new Map(ch.rank.map(r => [r.broker, r.volume]));
@@ -241,11 +305,11 @@ function renderChart() {
   });
   ch.chart.setOption({
     animation: false,
-    grid: {left: 58, right: 20, top: 16, bottom: 70},
+    grid: {left: 78, right: 20, top: 16, bottom: 70},
     tooltip: {trigger: "axis", confine: true, backgroundColor: cssv("--card"), borderColor: line, textStyle: {color: ink, fontSize: 11},
       formatter: ps => `<b>${ps[0].axisValueLabel}</b><br>` + ps.slice().sort((a, b) => b.value - a.value).map(p => `${p.marker}${p.seriesName} <b>${kmb(p.value)}</b>`).join("<br>")},
     xAxis: {type: "category", data: ch.dates, boundaryGap: false, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}},
-    yAxis: {type: "value", name: "Lot", nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: kmb}, splitLine: {lineStyle: {color: line}}},
+    yAxis: {type: "value", name: "Lot", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: kmb}, splitLine: {lineStyle: {color: line}}},
     dataZoom: [{type: "inside"}, {type: "slider", height: 18, bottom: 8}],
     series
   }, true);
@@ -260,11 +324,15 @@ async function addBroker() {
 }
 $("cAddBtn").onclick = addBroker; $("cAdd").onkeydown = e => { if (e.key === "Enter") addBroker(); };
 $("cMode").onchange = renderChart; $("cEm").onchange = refreshChart;
+$("cPrice").onchange = async () => {
+  if ($("cPrice").value !== "off" && !ch.price.size) { const e = await loadPrice(); $("prMsg").textContent = e; $("prMsg").className = e ? "neg" : "mute"; }
+  renderPrice();
+};
 $("cReset").onclick = async () => {
   ch.sel = ch.rank.slice(0, MAXB).map(r => r.broker);
   try { await ensureData(ch.sel); renderChart(); } catch (e) { cmsg("Gagal: " + (e.message || e), 1); }
 };
-addEventListener("resize", () => ch.chart && ch.chart.resize());
+addEventListener("resize", () => { ch.chart && ch.chart.resize(); ch.pchart && ch.pchart.resize(); });
 
 /* ===== PIVOT ===== */
 const pv = {a: null, rows: [], sortKey: "t", asc: false};
