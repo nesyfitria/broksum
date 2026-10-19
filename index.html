@@ -500,7 +500,7 @@ async function runChg(a) {
   try {
     const r = await rpcAll("price_changes", {p_from: a.p_from, p_to: a.p_to, p_emitens: a.p_emitens});
     const n = v => v == null ? null : +v;
-    cg.rows = r.map(x => ({trade_date: String(x.trade_date).slice(0, 10), emiten: x.emiten, close: n(x.close), prev_close: n(x.prev_close), chg: n(x.chg), chg_pct: n(x.chg_pct)}));
+    cg.rows = r.map(x => ({trade_date: String(x.trade_date).slice(0, 10), emiten: x.emiten, open: n(x.open), high: n(x.high), low: n(x.low), close: n(x.close), prev_close: n(x.prev_close), chg: n(x.chg), chg_pct: n(x.chg_pct), gap_pct: n(x.gap_pct), intraday_pct: n(x.intraday_pct), range_pct: n(x.range_pct)}));
     gmsg(cg.rows.length ? "" : "Tidak ada data harga untuk emiten ini pada rentang tersebut.");
     drawChg();
   } catch (e) {
@@ -520,14 +520,15 @@ function drawChg() {
       dates.map(d => `<tr><td>${d}</td>` + ems.map(e => { const v = m.get(d + "|" + e); return v == null ? '<td class="mute">·</td>' : `<td${shade(v)}>${fmt(v, 2)}%</td>`; }).join("") + "</tr>").join("") + "</tbody>";
     return;
   }
-  const cols = [["trade_date", "Tanggal"], ["emiten", "Emiten"], ["close", "Close"], ["prev_close", "Prev close"], ["chg", "Chg"], ["chg_pct", "Chg %"]];
+  const cols = [["trade_date", "Tanggal"], ["emiten", "Emiten"], ["open", "Open"], ["high", "High"], ["low", "Low"], ["close", "Close"], ["prev_close", "Prev close"], ["chg", "Chg"], ["chg_pct", "Chg %"], ["gap_pct", "Gap %"], ["intraday_pct", "Intraday %"], ["range_pct", "Range %"]];
+  const pc = v => v == null ? "-" : fmt(v, 2) + "%";
   const s = [...cg.rows].sort((a, b) => {
     const x = a[cg.sortKey], y = b[cg.sortKey];
     if (x == null) return 1; if (y == null) return -1;
     return (x > y ? 1 : x < y ? -1 : 0) * (cg.asc ? 1 : -1);
   });
   t.innerHTML = "<thead><tr>" + cols.map(([k, h]) => `<th tabindex="0" data-k="${k}">${h}${cg.sortKey === k ? (cg.asc ? " ▲" : " ▼") : ""}</th>`).join("") + "</tr></thead><tbody>" +
-    s.map(r => `<tr><td>${r.trade_date}</td><td>${r.emiten}</td><td>${fmt(r.close, 0)}</td><td>${fmt(r.prev_close, 0)}</td><td class="${cls(r.chg)}">${fmt(r.chg, 0)}</td><td class="${cls(r.chg_pct)}">${r.chg_pct == null ? "-" : fmt(r.chg_pct, 2) + "%"}</td></tr>`).join("") + "</tbody>";
+    s.map(r => `<tr><td>${r.trade_date}</td><td>${r.emiten}</td><td>${fmt(r.open, 0)}</td><td>${fmt(r.high, 0)}</td><td>${fmt(r.low, 0)}</td><td>${fmt(r.close, 0)}</td><td>${fmt(r.prev_close, 0)}</td><td class="${cls(r.chg)}">${fmt(r.chg, 0)}</td><td class="${cls(r.chg_pct)}">${pc(r.chg_pct)}</td><td class="${cls(r.gap_pct)}">${pc(r.gap_pct)}</td><td class="${cls(r.intraday_pct)}">${pc(r.intraday_pct)}</td><td>${pc(r.range_pct)}</td></tr>`).join("") + "</tbody>";
   t.querySelectorAll("th").forEach(th => {
     const go = () => { const k = th.dataset.k; cg.asc = cg.sortKey === k ? !cg.asc : false; cg.sortKey = k; drawChg(); };
     th.onclick = go; th.onkeydown = e => { if (e.key === "Enter") go(); };
@@ -535,8 +536,8 @@ function drawChg() {
 }
 function chgCsv() {
   if (!cg.rows.length) return gmsg("Belum ada data untuk diunduh.");
-  const lines = ["trade_date,emiten,close,prev_close,chg,chg_pct"].concat(
-    cg.rows.map(r => [r.trade_date, r.emiten, r.close ?? "", r.prev_close ?? "", r.chg ?? "", r.chg_pct ?? ""].join(",")));
+  const lines = ["trade_date,emiten,open,high,low,close,prev_close,chg,chg_pct,gap_pct,intraday_pct,range_pct"].concat(
+    cg.rows.map(r => [r.trade_date, r.emiten, r.open ?? "", r.high ?? "", r.low ?? "", r.close ?? "", r.prev_close ?? "", r.chg ?? "", r.chg_pct ?? "", r.gap_pct ?? "", r.intraday_pct ?? "", r.range_pct ?? ""].join(",")));
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
   a.download = "perubahan_harga.csv"; a.click();
