@@ -13,7 +13,11 @@
 #pt tfoot td{position:sticky;bottom:0;background:var(--card);font-weight:600;border-top:2px solid var(--line);z-index:2}
 #pt tfoot td:first-child{z-index:3}
 #pt .tot{font-weight:600}
-#pBox,#bBox{max-height:560px}
+#pBox,#bBox,#gBox{max-height:560px}
+#ct.pv td:first-child,#ct.pv th:first-child{position:sticky;left:0;background:var(--card);z-index:1;text-align:left}
+#ct.pv th:first-child{z-index:3}
+#ct.pv td:nth-child(2),#ct.pv th:nth-child(2){text-align:right}
+#ct.pv th{cursor:default}
 #bt td:first-child,#bt th:first-child{position:sticky;left:0;background:var(--card);z-index:1;text-align:left}
 #bt th:first-child{z-index:3}
 #bt td:nth-child(2),#bt th:nth-child(2){text-align:right}
@@ -89,6 +93,16 @@
   </div>
   <div id="bMsg" class="mute">Isi rentang dan emiten, lalu klik Tampilkan.</div>
   <div class="scroll" id="bBox"><table id="bt"></table></div>
+</div>
+
+<h2 class="sub" style="margin-top:22px">6. Perubahan harga harian (%) <span class="mute">· (close hari ini − close hari bursa sebelumnya) ÷ close sebelumnya × 100</span></h2>
+<div class="card" style="padding:12px">
+  <div class="bar">
+    <label>Tampilan<select id="gView"><option value="list">Daftar (tanggal, emiten)</option><option value="pivot">Pivot tanggal × emiten</option></select></label>
+    <button id="gCsv" class="alt">Unduh CSV</button>
+  </div>
+  <div id="gMsg" class="mute">Isi rentang dan emiten, lalu klik Tampilkan.</div>
+  <div class="scroll" id="gBox"><table id="ct"></table></div>
 </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -168,7 +182,7 @@ async function load() {
     }
     rows = all.map(r => { COLS.forEach(c => { if (c.n != null) r[c.k] = r[c.k] == null ? null : Number(r[c.k]); }); return r; });
     sortKey = "value_net"; asc = false; draw(); loadDates(args);
-    ch.pending = args; runChart(); runPivot(args); runBias(args);
+    ch.pending = args; runChart(); runPivot(args); runBias(args); runChg(args);
     $("info").textContent = d1 + " s/d " + d2 + " · " + rows.length.toLocaleString("id-ID") + " baris" + (rows.length > MAXSHOW ? ` (tampil ${MAXSHOW} teratas, CSV memuat semua)` : "");
   } catch (e) {
     msg("Gagal memuat: " + (e.message || e) + ". Pastikan fungsi broksum_main sudah dibuat di Supabase.");
@@ -475,6 +489,59 @@ function biasCsv() {
   a.download = "pivot_bias_" + $("bEm").value + ".csv"; a.click();
 }
 $("bEm").onchange = loadBias; $("bCsv").onclick = biasCsv;
+
+/* ===== PERUBAHAN HARGA % ===== */
+const cg = {rows: [], sortKey: "trade_date", asc: false};
+const gmsg = (t, bad) => { $("gMsg").textContent = t || ""; $("gMsg").className = bad ? "neg" : "mute"; };
+async function runChg(a) {
+  cg.sortKey = "trade_date"; cg.asc = false;
+  if (!a.p_emitens) { cg.rows = []; gmsg("Isi emiten untuk menampilkan perubahan harga."); drawChg(); return; }
+  gmsg("Memuat perubahan harga…");
+  try {
+    const r = await rpcAll("price_changes", {p_from: a.p_from, p_to: a.p_to, p_emitens: a.p_emitens});
+    const n = v => v == null ? null : +v;
+    cg.rows = r.map(x => ({trade_date: String(x.trade_date).slice(0, 10), emiten: x.emiten, close: n(x.close), prev_close: n(x.prev_close), chg: n(x.chg), chg_pct: n(x.chg_pct)}));
+    gmsg(cg.rows.length ? "" : "Tidak ada data harga untuk emiten ini pada rentang tersebut.");
+    drawChg();
+  } catch (e) {
+    gmsg("Gagal memuat perubahan harga: " + (e.message || e) + ". Pastikan fungsi price_changes sudah dibuat di Supabase.", 1);
+  }
+}
+function drawChg() {
+  const t = $("ct"), pivot = $("gView").value === "pivot";
+  t.className = pivot ? "pv" : "";
+  if (!cg.rows.length) { t.innerHTML = ""; return; }
+  const cls = v => v > 0 ? "pos" : v < 0 ? "neg" : "";
+  if (pivot) {
+    const dates = [...new Set(cg.rows.map(r => r.trade_date))].sort().reverse(), ems = [...new Set(cg.rows.map(r => r.emiten))].sort();
+    const m = new Map(cg.rows.map(r => [r.trade_date + "|" + r.emiten, r.chg_pct]));
+    const shade = v => !v ? "" : ` style="background:${v > 0 ? "rgba(11,138,95," : "rgba(201,60,60,"}${(0.08 + 0.52 * Math.min(Math.abs(v) / 10, 1)).toFixed(2)})"`;
+    t.innerHTML = "<thead><tr><th>Tanggal</th>" + ems.map(e => `<th>${e}</th>`).join("") + "</tr></thead><tbody>" +
+      dates.map(d => `<tr><td>${d}</td>` + ems.map(e => { const v = m.get(d + "|" + e); return v == null ? '<td class="mute">·</td>' : `<td${shade(v)}>${fmt(v, 2)}%</td>`; }).join("") + "</tr>").join("") + "</tbody>";
+    return;
+  }
+  const cols = [["trade_date", "Tanggal"], ["emiten", "Emiten"], ["close", "Close"], ["prev_close", "Prev close"], ["chg", "Chg"], ["chg_pct", "Chg %"]];
+  const s = [...cg.rows].sort((a, b) => {
+    const x = a[cg.sortKey], y = b[cg.sortKey];
+    if (x == null) return 1; if (y == null) return -1;
+    return (x > y ? 1 : x < y ? -1 : 0) * (cg.asc ? 1 : -1);
+  });
+  t.innerHTML = "<thead><tr>" + cols.map(([k, h]) => `<th tabindex="0" data-k="${k}">${h}${cg.sortKey === k ? (cg.asc ? " ▲" : " ▼") : ""}</th>`).join("") + "</tr></thead><tbody>" +
+    s.map(r => `<tr><td>${r.trade_date}</td><td>${r.emiten}</td><td>${fmt(r.close, 0)}</td><td>${fmt(r.prev_close, 0)}</td><td class="${cls(r.chg)}">${fmt(r.chg, 0)}</td><td class="${cls(r.chg_pct)}">${r.chg_pct == null ? "-" : fmt(r.chg_pct, 2) + "%"}</td></tr>`).join("") + "</tbody>";
+  t.querySelectorAll("th").forEach(th => {
+    const go = () => { const k = th.dataset.k; cg.asc = cg.sortKey === k ? !cg.asc : false; cg.sortKey = k; drawChg(); };
+    th.onclick = go; th.onkeydown = e => { if (e.key === "Enter") go(); };
+  });
+}
+function chgCsv() {
+  if (!cg.rows.length) return gmsg("Belum ada data untuk diunduh.");
+  const lines = ["trade_date,emiten,close,prev_close,chg,chg_pct"].concat(
+    cg.rows.map(r => [r.trade_date, r.emiten, r.close ?? "", r.prev_close ?? "", r.chg ?? "", r.chg_pct ?? ""].join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
+  a.download = "perubahan_harga.csv"; a.click();
+}
+$("gView").onchange = drawChg; $("gCsv").onclick = chgCsv;
 
 $("go").onclick = load; $("csv").onclick = exportCsv;
 document.querySelectorAll("#emiten,#broker").forEach(i => i.onkeydown = e => { if (e.key === "Enter") load(); });
