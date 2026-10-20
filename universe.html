@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broker Summary — Universe</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+#ut td:first-child,#ut th:first-child{position:sticky;left:0;background:var(--card);z-index:1;text-align:left}
+#ut th:first-child{z-index:3}
+#ut td:nth-child(2),#ut th:nth-child(2){text-align:right}
+#ut td{font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>Broker Summary</h1><nav><a href="index.html" data-p="index.html">Analisis</a><a href="universe.html" data-p="universe.html" class="on">Universe</a></nav><span id="info">Memuat…</span></header>
+<main>
+<div class="bar">
+  <label>Dari<input id="from" type="date"></label>
+  <label>Sampai<input id="to" type="date"></label>
+  <label>Filter emiten (opsional)<input id="emiten" placeholder="mis. BBCA, BB" size="18"></label>
+  <button id="go">Tampilkan</button>
+  <button id="csv" class="alt">Unduh CSV</button>
+</div>
+<div id="msg" role="alert"></div>
+<h2 class="sub">Perubahan harga harian (%) · seluruh emiten <span class="mute">· (close − close sebelumnya) ÷ close sebelumnya × 100 · klik header untuk mengurutkan</span></h2>
+<div class="card scroll"><table id="ut"></table></div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="config.js"></script>
+<script>
+const un = {rows: [], dates: [], sortKey: "emiten", asc: true};
+const fmt = (v, n) => v == null ? "-" : Number(v).toLocaleString("id-ID", {minimumFractionDigits: n, maximumFractionDigits: n});
+
+async function rpcAll(fn, args) {
+  let all = [], from = 0;
+  while (true) {
+    const {data, error} = await sb.rpc(fn, args).range(from, from + 999);
+    if (error) throw error;
+    all = all.concat(data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+  return all;
+}
+
+async function load() {
+  msg("");
+  const d1 = $("from").value, d2 = $("to").value;
+  if (!d1 || !d2) return msg("Isi tanggal Dari dan Sampai.");
+  if (d1 > d2) return msg("Tanggal Dari tidak boleh setelah Sampai.");
+  $("go").disabled = true; $("info").textContent = "Memuat…";
+  try {
+    const r = await rpcAll("price_universe", {p_from: d1, p_to: d2});
+    const dset = new Set();
+    un.rows = r.map(x => {
+      const m = new Map();
+      x.dates.forEach((d, i) => { const k = String(d).slice(0, 10); dset.add(k); m.set(k, x.chg_pct[i] == null ? null : +x.chg_pct[i]); });
+      let f = 1, n = 0;
+      m.forEach(v => { if (v != null) { f *= 1 + v / 100; n++; } });
+      return {emiten: x.emiten, m, per: n ? (f - 1) * 100 : null};
+    });
+    un.dates = [...dset].sort();
+    draw();
+    $("info").textContent = d1 + " s/d " + d2 + " · " + un.rows.length.toLocaleString("id-ID") + " emiten · " + un.dates.length + " tanggal";
+  } catch (e) {
+    msg("Gagal memuat: " + (e.message || e) + ". Pastikan fungsi price_universe sudah dibuat di Supabase.");
+    $("info").textContent = "Terjadi kesalahan";
+  }
+  $("go").disabled = false;
+}
+
+function visible() {
+  const f = parse($("emiten").value);
+  return f.length ? un.rows.filter(r => f.some(x => r.emiten.startsWith(x))) : un.rows;
+}
+
+function draw() {
+  const t = $("ut");
+  if (!un.rows.length) { t.innerHTML = ""; return; }
+  const arrow = k => un.sortKey === k ? (un.asc ? " ▲" : " ▼") : "";
+  const sh = v => !v ? "" : ` style="background:${v > 0 ? "rgba(11,138,95," : "rgba(201,60,60,"}${(0.08 + 0.52 * Math.min(Math.abs(v) / 10, 1)).toFixed(2)})"`;
+  const val = r => un.sortKey === "emiten" ? r.emiten : un.sortKey === "per" ? r.per : r.m.get(un.sortKey);
+  const rows = [...visible()].sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null) return 1; if (y == null) return -1;
+    return (x > y ? 1 : x < y ? -1 : 0) * (un.asc ? 1 : -1);
+  });
+  t.innerHTML = '<thead><tr><th data-k="emiten" tabindex="0">Emiten' + arrow("emiten") + '</th><th data-k="per" tabindex="0" title="Perubahan sepanjang rentang (gabungan perubahan harian)">Periode %' + arrow("per") + "</th>" +
+    un.dates.map(d => `<th data-k="${d}" tabindex="0" title="${d}">${d.slice(2)}${arrow(d)}</th>`).join("") + "</tr></thead><tbody>" +
+    rows.map(r => `<tr><td>${r.emiten}</td><td class="${r.per > 0 ? "pos" : r.per < 0 ? "neg" : ""}">${fmt(r.per, 2)}</td>` +
+      un.dates.map(d => { const v = r.m.get(d); return v == null ? '<td class="mute">·</td>' : `<td${sh(v)}>${fmt(v, 2)}</td>`; }).join("") + "</tr>").join("") + "</tbody>";
+  t.querySelectorAll("th").forEach(th => {
+    const go = () => { const k = th.dataset.k; un.asc = un.sortKey === k ? !un.asc : (k === "emiten"); un.sortKey = k; draw(); };
+    th.onclick = go; th.onkeydown = e => { if (e.key === "Enter") go(); };
+  });
+}
+
+function exportCsv() {
+  const rows = visible();
+  if (!rows.length) return msg("Belum ada data untuk diunduh.");
+  const lines = [["emiten", "periode_pct", ...un.dates].join(",")].concat(rows.map(r =>
+    [r.emiten, r.per == null ? "" : r.per.toFixed(2), ...un.dates.map(d => r.m.get(d) ?? "")].join(",")));
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
+  a.download = "universe_perubahan_harga.csv"; a.click();
+}
+
+$("go").onclick = load; $("csv").onclick = exportCsv;
+$("emiten").oninput = draw;
+initInputs().then(() => load());
+</script>
+</body>
+</html>
