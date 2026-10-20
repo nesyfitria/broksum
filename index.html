@@ -53,6 +53,7 @@
     <label>Gaya harga<select id="cPrice"><option value="candle">Candlestick (OHLC)</option><option value="ohlc">Batang OHLC</option><option value="off">Sembunyikan</option></select></label>
     <span id="prMsg" class="mute"></span>
   </div>
+  <div class="mute" style="font-size:12px;margin-bottom:6px">Arahkan kursor ke candle untuk melihat 5 broker acc dan 5 broker dist terbesar (net lot) pada tanggal itu.</div>
   <div id="pchart"></div>
 </div>
 <div class="card" style="padding:12px">
@@ -201,7 +202,7 @@ function exportCsv() {
 }
 /* ===== CHART ===== */
 const MAXB = 20;
-const ch = {chart: null, a: null, em: null, dates: [], rank: [], sel: [], cache: new Map(), colors: new Map(), n: 0, dirty: false, pending: null, price: new Map(), pchart: null};
+const ch = {chart: null, a: null, em: null, dates: [], rank: [], sel: [], cache: new Map(), colors: new Map(), n: 0, dirty: false, pending: null, price: new Map(), top: new Map(), pchart: null};
 const cssv = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const kmb = v => {
   const a = Math.abs(v), s = v < 0 ? "-" : "", f = (x, u) => s + (+x.toFixed(1)) + u;
@@ -254,13 +255,27 @@ async function refreshChart() {
     ch.dates = dd.length ? dd[0].dates : [];
     ch.sel = ch.rank.slice(0, MAXB).map(r => r.broker);
     await ensureData(ch.sel);
-    const perr = await loadPrice();
+    const [e1, e2] = await Promise.all([loadPrice(), loadTop()]);
+    const perr = e1 || e2;
     $("prMsg").textContent = perr; $("prMsg").className = perr ? "neg" : "mute";
     cmsg(ch.dates.length ? "" : "Tidak ada data broker untuk emiten ini pada rentang tersebut.");
     renderChart(); renderPrice();
   } catch (e) {
     cmsg("Gagal memuat chart: " + (e.message || e) + ". Pastikan fungsi broksum_rank, broksum_series, dan broksum_dates sudah dibuat di Supabase.", 1);
   }
+}
+async function loadTop() {
+  ch.top = new Map();
+  if ($("cPrice").value === "off" || !ch.em || !ch.a) return "";
+  try {
+    const r = await rpcAll("broksum_topacc", {p_from: ch.a.p_from, p_to: ch.a.p_to, p_emiten: ch.em, p_n: 5});
+    r.forEach(x => {
+      const d = String(x.trade_date).slice(0, 10);
+      let o = ch.top.get(d); if (!o) ch.top.set(d, o = {acc: [], dist: []});
+      o[x.side].push({b: x.broker, lot: +x.lot});
+    });
+    return "";
+  } catch (e) { ch.top = new Map(); return "Top broker tidak bisa dimuat: " + (e.message || e) + ". Pastikan fungsi broksum_topacc sudah dibuat di Supabase."; }
 }
 async function loadPrice() {
   ch.price = new Map();
@@ -307,7 +322,11 @@ function renderPrice() {
       formatter: ps => {
         const d = ps[0].axisValue, p = ch.price.get(d), prev = ch.price.get(dates[dates.indexOf(d) - 1]);
         const chg = prev ? ` (${(p.c / prev.c - 1 >= 0 ? "+" : "")}${((p.c / prev.c - 1) * 100).toFixed(2)}%)` : "";
-        return `<b>${d}</b><br>O ${fp(p.o)} · H ${fp(p.h)}<br>L ${fp(p.l)} · C ${fp(p.c)}${chg}`;
+        const tb = ch.top.get(d);
+        const col = (t, c, a) => `<td valign="top" style="padding-right:14px"><b style="color:${c}">${t}</b>` + (a.length ? a.map(x => `<br>${x.b} ${kmb(x.lot)}`).join("") : "<br>-") + "</td>";
+        const top = tb ? `<table style="margin-top:6px"><tr>${col("Acc terbesar", cssv("--buy"), tb.acc)}${col("Dist terbesar", cssv("--sell"), tb.dist)}</tr></table>`
+                       : `<div style="margin-top:6px;color:${mute}">Data broker tidak tersedia</div>`;
+        return `<b>${d}</b><br>O ${fp(p.o)} · H ${fp(p.h)}<br>L ${fp(p.l)} · C ${fp(p.c)}${chg}` + top;
       }},
     xAxis: {type: "category", data: dates, boundaryGap: true, axisLabel: {color: mute}, axisLine: {lineStyle: {color: line}}},
     yAxis: {type: "value", scale: true, name: "Harga", nameLocation: "middle", nameGap: 58, nameTextStyle: {color: mute}, axisLabel: {color: mute, formatter: fp}, splitLine: {lineStyle: {color: line}}},
@@ -355,7 +374,7 @@ async function addBroker() {
 $("cAddBtn").onclick = addBroker; $("cAdd").onkeydown = e => { if (e.key === "Enter") addBroker(); };
 $("cMode").onchange = renderChart; $("cEm").onchange = refreshChart;
 $("cPrice").onchange = async () => {
-  if ($("cPrice").value !== "off" && !ch.price.size) { const e = await loadPrice(); $("prMsg").textContent = e; $("prMsg").className = e ? "neg" : "mute"; }
+  if ($("cPrice").value !== "off" && !ch.price.size) { const [e1, e2] = await Promise.all([loadPrice(), loadTop()]); const e = e1 || e2; $("prMsg").textContent = e; $("prMsg").className = e ? "neg" : "mute"; }
   renderPrice();
 };
 $("cReset").onclick = async () => {
