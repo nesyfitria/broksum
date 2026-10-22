@@ -21,13 +21,16 @@
   <label>Sampai<input id="to" type="date"></label>
   <label>Filter emiten (opsional)<input id="emiten" placeholder="mis. BBCA, BB" size="18"></label>
   <button id="go">Tampilkan</button>
-  <button id="csv" class="alt">Unduh CSV</button>
+  <button id="csv" class="alt">Unduh CSV (pivot)</button>
+  <button id="csvL" class="alt">Unduh CSV (daftar)</button>
+  <button id="xlsx" class="alt">Unduh Excel</button>
 </div>
 <div id="msg" role="alert"></div>
 <h2 class="sub">Perubahan harga harian (%) · seluruh emiten <span class="mute">· (close − close sebelumnya) ÷ close sebelumnya × 100 · klik header untuk mengurutkan</span></h2>
 <div class="card scroll"><table id="ut"></table></div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="config.js"></script>
 <script>
 const un = {rows: [], dates: [], sortKey: "emiten", asc: true};
@@ -97,17 +100,43 @@ function draw() {
   });
 }
 
+function save(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+}
+function listRows(rows) {
+  const out = [];
+  rows.forEach(r => un.dates.forEach(d => { const v = r.m.get(d); if (v != null) out.push([r.emiten, d, v]); }));
+  return out;
+}
 function exportCsv() {
   const rows = visible();
   if (!rows.length) return msg("Belum ada data untuk diunduh.");
   const lines = [["emiten", "periode_pct", ...un.dates].join(",")].concat(rows.map(r =>
     [r.emiten, r.per == null ? "" : r.per.toFixed(2), ...un.dates.map(d => r.m.get(d) ?? "")].join(",")));
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([lines.join("\n")], {type: "text/csv"}));
-  a.download = "universe_perubahan_harga.csv"; a.click();
+  save(new Blob(["\ufeff" + lines.join("\n")], {type: "text/csv;charset=utf-8"}), "universe_pivot.csv");
+}
+function exportList() {
+  const rows = visible();
+  if (!rows.length) return msg("Belum ada data untuk diunduh.");
+  const lines = ["emiten,trade_date,chg_pct"].concat(listRows(rows).map(x => x.join(",")));
+  save(new Blob(["\ufeff" + lines.join("\n")], {type: "text/csv;charset=utf-8"}), "universe_daftar.csv");
+}
+function exportXlsx() {
+  const rows = visible();
+  if (!rows.length) return msg("Belum ada data untuk diunduh.");
+  if (typeof XLSX === "undefined") return msg("Pustaka Excel gagal dimuat. Periksa koneksi internet lalu muat ulang halaman.");
+  const pivot = [["emiten", "periode_pct", ...un.dates]].concat(rows.map(r =>
+    [r.emiten, r.per == null ? null : +r.per.toFixed(2), ...un.dates.map(d => r.m.get(d) ?? null)]));
+  const list = [["emiten", "trade_date", "chg_pct"]].concat(listRows(rows));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pivot), "Pivot");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(list), "Daftar");
+  XLSX.writeFile(wb, "universe_perubahan_harga.xlsx");
 }
 
 $("go").onclick = load; $("csv").onclick = exportCsv;
+$("csvL").onclick = exportList; $("xlsx").onclick = exportXlsx;
 $("emiten").oninput = draw;
 initInputs().then(() => load());
 </script>
